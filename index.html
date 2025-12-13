@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🀄️ ゲーム募集</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <script type="module">
+    import React, { useState, useEffect } from 'https://esm.sh/react@18.2.0';
+    import ReactDOM from 'https://esm.sh/react-dom@18.2.0/client';
+
+    function App() {
+      const [events, setEvents] = useState([]);
+      const [showCreateForm, setShowCreateForm] = useState(false);
+      const [showSettings, setShowSettings] = useState(false);
+      const [newEventTitle, setNewEventTitle] = useState('');
+      const [newEventTime, setNewEventTime] = useState('');
+      const [newEventMinPlayers, setNewEventMinPlayers] = useState(3);
+      const [copiedId, setCopiedId] = useState(null);
+      const [webhookUrl, setWebhookUrl] = useState('');
+      const [tempWebhookUrl, setTempWebhookUrl] = useState('');
+
+      useEffect(() => {
+        loadEvents();
+        loadWebhookUrl();
+      }, []);
+
+      const loadWebhookUrl = () => {
+        const saved = localStorage.getItem('discordWebhook');
+        if (saved) {
+          setWebhookUrl(saved);
+          setTempWebhookUrl(saved);
+        }
+      };
+
+      const saveWebhookUrl = () => {
+        localStorage.setItem('discordWebhook', tempWebhookUrl);
+        setWebhookUrl(tempWebhookUrl);
+        setShowSettings(false);
+        alert('Discord Webhookを保存しました！✅');
+      };
+
+      const loadEvents = () => {
+        const stored = localStorage.getItem('events');
+        if (stored) {
+          setEvents(JSON.parse(stored));
+        }
+      };
+
+      const saveEvents = (newEvents) => {
+        localStorage.setItem('events', JSON.stringify(newEvents));
+        setEvents(newEvents);
+      };
+
+      const sendDiscordNotification = async (event) => {
+        if (!webhookUrl) return;
+
+        const eventUrl = `${window.location.href}#${event.id}`;
+        
+        const embed = {
+          title: "🎮 新しいゲーム募集！",
+          description: `**${event.title}**\n⏰ ${event.time}\n👥 必要人数: ${event.minPlayers}人`,
+          color: 0x9333EA,
+          fields: [
+            {
+              name: "参加方法",
+              value: `[ここをクリックして参加表明](${eventUrl})`,
+              inline: false
+            }
+          ],
+          footer: {
+            text: "🀄️ で参加表明しよう！"
+          },
+          timestamp: new Date().toISOString()
+        };
+
+        try {
+          const response = await fetch(webhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              content: "@everyone 新しいゲーム募集が来たよ！",
+              embeds: [embed]
+            })
+          });
+
+          if (!response.ok) {
+            console.error('Discord通知エラー');
+          }
+        } catch (error) {
+          console.error('Discord通知送信失敗:', error);
+        }
+      };
+
+      const createEvent = async () => {
+        if (!newEventTitle.trim()) return;
+
+        const eventId = `event_${Date.now()}`;
+        const newEvent = {
+          id: eventId,
+          title: newEventTitle,
+          time: newEventTime || '今日',
+          minPlayers: newEventMinPlayers,
+          participants: [],
+          createdAt: Date.now()
+        };
+
+        const updatedEvents = [newEvent, ...events];
+        saveEvents(updatedEvents);
+        
+        setNewEventTitle('');
+        setNewEventTime('');
+        setNewEventMinPlayers(3);
+        setShowCreateForm(false);
+
+        await sendDiscordNotification(newEvent);
+        alert('募集を作成してDiscordに通知しました！🎉');
+      };
+
+      const joinEvent = async (eventId) => {
+        const userId = getUserId();
+        const eventIndex = events.findIndex(e => e.id === eventId);
+        if (eventIndex === -1) return;
+
+        const event = {...events[eventIndex]};
+        const wasEnough = event.participants.length >= event.minPlayers;
+
+        if (event.participants.includes(userId)) {
+          event.participants = event.participants.filter(id => id !== userId);
+        } else {
+          event.participants.push(userId);
+        }
+
+        const isNowEnough = event.participants.length >= event.minPlayers;
+        
+        const updatedEvents = [...events];
+        updatedEvents[eventIndex] = event;
+        saveEvents(updatedEvents);
+
+        if (!wasEnough && isNowEnough && webhookUrl) {
+          try {
+            await fetch(webhookUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                content: `🎉 **${event.title}** の開催が決定しました！\n👥 ${event.participants.length}人集まりました！`
+              })
+            });
+          } catch (error) {
+            console.error('Discord通知エラー:', error);
+          }
+        }
+      };
+
+      const getUserId = () => {
+        let userId = localStorage.getItem('userId');
+        if (!userId) {
+          userId = `user_${Math.random().toString(36).substr(2, 9)}`;
+          localStorage.setItem('userId', userId);
+        }
+        return userId;
+      };
+
+      const copyEventUrl = (eventId) => {
+        const url = `${window.location.href.split('#')[0]}#${eventId}`;
+        navigator.clipboard.writeText(url);
+        setCopiedId(eventId);
+        setTimeout(() => setCopiedId(null), 2000);
+      };
+
+      const isUserJoined = (event) => {
+        const userId = getUserId();
+        return event.participants.includes(userId);
+      };
+
+      return React.createElement('div', { className: 'min-h-screen p-4' },
+        React.createElement('div', { className: 'max-w-2xl mx-auto' },
+          React.createElement('div', { className: 'text-center mb-8 pt-6' },
+            React.createElement('div', { className: 'flex items-center justify-center gap-3 mb-2' },
+              React.createElement('h1', { className: 'text-4xl font-bold text-white' }, '🀄️ ゲーム募集'),
+              React.createElement('button', {
+                onClick: () => setShowSettings(!showSettings),
+                className: 'bg-white/20 hover:bg-white/30 text-white p-2 rounded-lg transition-all',
+                title: 'Discord設定'
+              }, '⚙️')
+            ),
+            React.createElement('p', { className: 'text-purple-200' }, '匿名で参加表明 + Discord通知'),
+            webhookUrl && React.createElement('div', { className: 'flex items-center justify-center gap-2 mt-2' },
+              React.createElement('span', { className: 'text-green-400 text-sm' }, '🔔 Discord連携済み')
+            )
+          ),
+
+          showSettings && React.createElement('div', { className: 'bg-white/10 backdrop-blur-lg rounded-xl p-6 mb-6 border border-white/20' },
+            React.createElement('h2', { className: 'text-white font-bold text-xl mb-4' }, '🔔 Discord Webhook設定'),
+            React.createElement('p', { className: 'text-purple-200 text-sm mb-4' }, 'Discord通知を有効にするには、サーバーでWebhook URLを取得してください'),
+            React.createElement('input', {
+              type: 'text',
+              placeholder: 'https://discord.com/api/webhooks/...',
+              value: tempWebhookUrl,
+              onChange: (e) => setTempWebhookUrl(e.target.value),
+              className: 'w-full bg-white/20 text-white placeholder-purple-300 border border-white/30 rounded-lg px-4 py-3 mb-3 focus:outline-none focus:ring-2 focus:ring-purple-400'
+            }),
+            React.createElement('div', { className: 'flex gap-3' },
+              React.createElement('button', {
+                onClick: saveWebhookUrl,
+                className: 'flex-1 bg-gradient-to-r from-green-400 to-blue-500 text-white py-3 rounded-lg font-bold'
+              }, '保存'),
+              React.createElement('button', {
+                onClick: () => setShowSettings(false),
+                className: 'flex-1 bg-white/20 text-white py-3 rounded-lg font-bold'
+              }, '閉じる')
+            )
+          ),
+
+          !showCreateForm ? React.createElement('button', {
+            onClick: () => setShowCreateForm(true),
+            className: 'w-full bg-gradient-to-r from-pink-500 to-purple-500 text-white py-4 rounded-xl font-bold text-lg shadow-lg mb-6'
+          }, '+ 新しく募集する') : React.createElement('div', { className: 'bg-white/10 backdrop-blur-lg rounded-xl p-6 mb-6 border border-white/20' },
+            React.createElement('h2', { className: 'text-white font-bold text-xl mb-4' }, '新規募集'),
+            React.createElement('input', {
+              type: 'text',
+              placeholder: 'ゲームのタイトル（例：APEXやる人！）',
+              value: newEventTitle,
+              onChange: (e) => setNewEventTitle(e.target.value),
+              className: 'w-full bg-white/20 text-white placeholder-purple-200 border border-white/30 rounded-lg px-4 py-3 mb-3'
+            }),
+            React.createElement('input', {
+              type: 'text',
+              placeholder: '時間（例：21:00〜、今から、など）',
+              value: newEventTime,
+              onChange: (e) => setNewEventTime(e.target.value),
+              className: 'w-full bg-white/20 text-white placeholder-purple-200 border border-white/30 rounded-lg px-4 py-3 mb-3'
+            }),
+            React.createElement('div', { className: 'mb-4' },
+              React.createElement('label', { className: 'text-purple-200 text-sm mb-2 block' }, '必要人数'),
+              React.createElement('input', {
+                type: 'number',
+                min: '2',
+                max: '10',
+                value: newEventMinPlayers,
+                onChange: (e) => setNewEventMinPlayers(parseInt(e.target.value)),
+                className: 'w-full bg-white/20 text-white border border-white/30 rounded-lg px-4 py-3'
+              })
+            ),
+            React.createElement('div', { className: 'flex gap-3' },
+              React.createElement('button', {
+                onClick: createEvent,
+                className: 'flex-1 bg-gradient-to-r from-green-400 to-blue-500 text-white py-3 rounded-lg font-bold'
+              }, webhookUrl ? '作成 & Discord通知' : '作成'),
+              React.createElement('button', {
+                onClick: () => setShowCreateForm(false),
+                className: 'flex-1 bg-white/20 text-white py-3 rounded-lg font-bold'
+              }, 'キャンセル')
+            )
+          ),
+
+          React.createElement('div', { className: 'space-y-4' },
+            events.length === 0 ? React.createElement('div', { className: 'text-center py-12 text-purple-200' },
+              React.createElement('p', null, 'まだ募集がありません')
+            ) : events.map(event => {
+              const isEnough = event.participants.length >= event.minPlayers;
+              const userJoined = isUserJoined(event);
+
+              return React.createElement('div', {
+                key: event.id,
+                className: `bg-white/10 backdrop-blur-lg rounded-xl p-6 border-2 ${isEnough ? 'border-green-400' : 'border-white/20'}`
+              },
+                React.createElement('div', { className: 'flex justify-between items-start mb-4' },
+                  React.createElement('div', { className: 'flex-1' },
+                    React.createElement('h3', { className: 'text-white font-bold text-xl mb-1' }, event.title),
+                    React.createElement('p', { className: 'text-purple-200 text-sm' }, '⏰ ' + event.time)
+                  ),
+                  React.createElement('button', {
+                    onClick: () => copyEventUrl(event.id),
+                    className: 'bg-white/20 hover:bg-white/30 text-white p-2 rounded-lg',
+                    title: 'URLをコピー'
+                  }, copiedId === event.id ? '✓' : '📋')
+                ),
+                React.createElement('div', { className: 'mb-4' },
+                  React.createElement('div', { className: 'flex items-center gap-2 mb-2' },
+                    React.createElement('span', { className: 'text-white font-bold' },
+                      `${event.participants.length} / ${event.minPlayers}人`
+                    ),
+                    isEnough && React.createElement('span', { className: 'bg-green-500 text-white text-xs px-2 py-1 rounded-full font-bold' }, '開催決定！')
+                  ),
+                  React.createElement('div', { className: 'flex gap-1 flex-wrap' },
+                    event.participants.map((_, i) => React.createElement('span', { key: i, className: 'text-3xl' }, '🀄️'))
+                  )
+                ),
+                React.createElement('button', {
+                  onClick: () => joinEvent(event.id),
+                  className: `w-full py-3 rounded-lg font-bold ${userJoined ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-gradient-to-r from-yellow-400 to-orange-500 text-white'}`
+                }, userJoined ? '🀄️ 参加取り消し' : '🀄️ 参加する')
+              );
+            })
+          )
+        )
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('app')).render(React.createElement(App));
+  </script>
+</body>
+</html>
