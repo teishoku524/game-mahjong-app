@@ -25,7 +25,9 @@
       const [showSettings, setShowSettings] = useState(false);
       const [newEventTitle, setNewEventTitle] = useState('');
       const [newEventTime, setNewEventTime] = useState('');
+      const [newEventDeadline, setNewEventDeadline] = useState('');
       const [newEventMinPlayers, setNewEventMinPlayers] = useState(3);
+      const [newEventNote, setNewEventNote] = useState('');
       const [copiedId, setCopiedId] = useState(null);
       const [webhookUrl, setWebhookUrl] = useState('');
       const [tempWebhookUrl, setTempWebhookUrl] = useState('');
@@ -33,7 +35,29 @@
       useEffect(() => {
         loadEvents();
         loadWebhookUrl();
+        
+        // 1分ごとに期限切れをチェック
+        const interval = setInterval(checkExpiredEvents, 60000);
+        return () => clearInterval(interval);
       }, []);
+
+      const checkExpiredEvents = () => {
+        const now = new Date();
+        const stored = localStorage.getItem('events');
+        if (!stored) return;
+        
+        const currentEvents = JSON.parse(stored);
+        const activeEvents = currentEvents.filter(event => {
+          if (!event.deadline) return true;
+          const deadline = new Date(event.deadline);
+          return deadline > now;
+        });
+        
+        if (activeEvents.length !== currentEvents.length) {
+          localStorage.setItem('events', JSON.stringify(activeEvents));
+          setEvents(activeEvents);
+        }
+      };
 
       const loadWebhookUrl = () => {
         const saved = localStorage.getItem('discordWebhook');
@@ -65,11 +89,20 @@
       const sendDiscordNotification = async (event) => {
         if (!webhookUrl) return;
 
-        const eventUrl = `${window.location.href}#${event.id}`;
+        const eventUrl = `${window.location.href.split('#')[0]}#${event.id}`;
         
+        let description = `⏰ ${event.time}\n👥 必要人数: ${event.minPlayers}人`;
+        if (event.deadline) {
+          const deadline = new Date(event.deadline);
+          description += `\n⏳ 締切: ${deadline.toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
+        }
+        if (event.note) {
+          description += `\n📝 ${event.note}`;
+        }
+
         const embed = {
-          title: "🎮 新しいゲーム募集！",
-          description: `**${event.title}**\n⏰ ${event.time}\n👥 必要人数: ${event.minPlayers}人`,
+          title: `🎮 ${event.title}ぽ`,
+          description: description,
           color: 0x9333EA,
           fields: [
             {
@@ -89,7 +122,7 @@
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              content: "@everyone 新しいゲーム募集が来たよ！",
+              content: "@everyone",
               embeds: [embed]
             })
           });
@@ -110,7 +143,9 @@
           id: eventId,
           title: newEventTitle,
           time: newEventTime || '今日',
+          deadline: newEventDeadline || null,
           minPlayers: newEventMinPlayers,
+          note: newEventNote,
           participants: [],
           createdAt: Date.now()
         };
@@ -120,11 +155,20 @@
         
         setNewEventTitle('');
         setNewEventTime('');
+        setNewEventDeadline('');
         setNewEventMinPlayers(3);
+        setNewEventNote('');
         setShowCreateForm(false);
 
         await sendDiscordNotification(newEvent);
         alert('募集を作成してDiscordに通知しました！🎉');
+      };
+
+      const deleteEvent = (eventId) => {
+        if (!confirm('この募集を削除しますか？')) return;
+        
+        const updatedEvents = events.filter(e => e.id !== eventId);
+        saveEvents(updatedEvents);
       };
 
       const joinEvent = async (eventId) => {
@@ -183,6 +227,11 @@
         return event.participants.includes(userId);
       };
 
+      const isExpired = (event) => {
+        if (!event.deadline) return false;
+        return new Date(event.deadline) < new Date();
+      };
+
       return React.createElement('div', { className: 'min-h-screen p-4' },
         React.createElement('div', { className: 'max-w-2xl mx-auto' },
           React.createElement('div', { className: 'text-center mb-8 pt-6' },
@@ -229,19 +278,28 @@
             React.createElement('h2', { className: 'text-white font-bold text-xl mb-4' }, '新規募集'),
             React.createElement('input', {
               type: 'text',
-              placeholder: 'ゲームのタイトル（例：APEXやる人！）',
+              placeholder: 'ゲームのタイトル（例：APEX）',
               value: newEventTitle,
               onChange: (e) => setNewEventTitle(e.target.value),
               className: 'w-full bg-white/20 text-white placeholder-purple-200 border border-white/30 rounded-lg px-4 py-3 mb-3'
             }),
             React.createElement('input', {
               type: 'text',
-              placeholder: '時間（例：21:00〜、今から、など）',
+              placeholder: '開始時間（例：21:00〜、今から、など）',
               value: newEventTime,
               onChange: (e) => setNewEventTime(e.target.value),
               className: 'w-full bg-white/20 text-white placeholder-purple-200 border border-white/30 rounded-lg px-4 py-3 mb-3'
             }),
-            React.createElement('div', { className: 'mb-4' },
+            React.createElement('div', { className: 'mb-3' },
+              React.createElement('label', { className: 'text-purple-200 text-sm mb-2 block' }, '募集締切時間（任意）'),
+              React.createElement('input', {
+                type: 'datetime-local',
+                value: newEventDeadline,
+                onChange: (e) => setNewEventDeadline(e.target.value),
+                className: 'w-full bg-white/20 text-white border border-white/30 rounded-lg px-4 py-3'
+              })
+            ),
+            React.createElement('div', { className: 'mb-3' },
               React.createElement('label', { className: 'text-purple-200 text-sm mb-2 block' }, '必要人数'),
               React.createElement('input', {
                 type: 'number',
@@ -252,6 +310,13 @@
                 className: 'w-full bg-white/20 text-white border border-white/30 rounded-lg px-4 py-3'
               })
             ),
+            React.createElement('textarea', {
+              placeholder: '補足情報（任意）例：ランクマ、カジュアル、初心者歓迎など',
+              value: newEventNote,
+              onChange: (e) => setNewEventNote(e.target.value),
+              rows: 3,
+              className: 'w-full bg-white/20 text-white placeholder-purple-200 border border-white/30 rounded-lg px-4 py-3 mb-4'
+            }),
             React.createElement('div', { className: 'flex gap-3' },
               React.createElement('button', {
                 onClick: createEvent,
@@ -270,34 +335,47 @@
             ) : events.map(event => {
               const isEnough = event.participants.length >= event.minPlayers;
               const userJoined = isUserJoined(event);
+              const expired = isExpired(event);
 
               return React.createElement('div', {
                 key: event.id,
-                className: `bg-white/10 backdrop-blur-lg rounded-xl p-6 border-2 ${isEnough ? 'border-green-400' : 'border-white/20'}`
+                className: `bg-white/10 backdrop-blur-lg rounded-xl p-6 border-2 ${isEnough ? 'border-green-400' : expired ? 'border-red-400' : 'border-white/20'}`
               },
                 React.createElement('div', { className: 'flex justify-between items-start mb-4' },
                   React.createElement('div', { className: 'flex-1' },
                     React.createElement('h3', { className: 'text-white font-bold text-xl mb-1' }, event.title),
-                    React.createElement('p', { className: 'text-purple-200 text-sm' }, '⏰ ' + event.time)
+                    React.createElement('p', { className: 'text-purple-200 text-sm' }, '⏰ ' + event.time),
+                    event.deadline && React.createElement('p', { className: `text-sm ${expired ? 'text-red-400' : 'text-purple-300'}` },
+                      '⏳ 締切: ' + new Date(event.deadline).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                    ),
+                    event.note && React.createElement('p', { className: 'text-purple-200 text-sm mt-2' }, '📝 ' + event.note)
                   ),
-                  React.createElement('button', {
-                    onClick: () => copyEventUrl(event.id),
-                    className: 'bg-white/20 hover:bg-white/30 text-white p-2 rounded-lg',
-                    title: 'URLをコピー'
-                  }, copiedId === event.id ? '✓' : '📋')
+                  React.createElement('div', { className: 'flex gap-2' },
+                    React.createElement('button', {
+                      onClick: () => copyEventUrl(event.id),
+                      className: 'bg-white/20 hover:bg-white/30 text-white p-2 rounded-lg',
+                      title: 'URLをコピー'
+                    }, copiedId === event.id ? '✓' : '📋'),
+                    React.createElement('button', {
+                      onClick: () => deleteEvent(event.id),
+                      className: 'bg-red-500/20 hover:bg-red-500/30 text-red-200 p-2 rounded-lg',
+                      title: '削除'
+                    }, '🗑️')
+                  )
                 ),
                 React.createElement('div', { className: 'mb-4' },
                   React.createElement('div', { className: 'flex items-center gap-2 mb-2' },
                     React.createElement('span', { className: 'text-white font-bold' },
                       `${event.participants.length} / ${event.minPlayers}人`
                     ),
-                    isEnough && React.createElement('span', { className: 'bg-green-500 text-white text-xs px-2 py-1 rounded-full font-bold' }, '開催決定！')
+                    isEnough && React.createElement('span', { className: 'bg-green-500 text-white text-xs px-2 py-1 rounded-full font-bold' }, '開催決定！'),
+                    expired && React.createElement('span', { className: 'bg-red-500 text-white text-xs px-2 py-1 rounded-full font-bold' }, '募集終了')
                   ),
                   React.createElement('div', { className: 'flex gap-1 flex-wrap' },
                     event.participants.map((_, i) => React.createElement('span', { key: i, className: 'text-3xl' }, '🀄️'))
                   )
                 ),
-                React.createElement('button', {
+                !expired && React.createElement('button', {
                   onClick: () => joinEvent(event.id),
                   className: `w-full py-3 rounded-lg font-bold ${userJoined ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-gradient-to-r from-yellow-400 to-orange-500 text-white'}`
                 }, userJoined ? '🀄️ 参加取り消し' : '🀄️ 参加する')
