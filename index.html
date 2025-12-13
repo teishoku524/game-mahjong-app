@@ -16,8 +16,23 @@
   <div id="app"></div>
 
   <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+    import { getFirestore, collection, addDoc, onSnapshot, updateDoc, deleteDoc, doc, query, orderBy } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
     import React, { useState, useEffect } from 'https://esm.sh/react@18.2.0';
     import ReactDOM from 'https://esm.sh/react-dom@18.2.0/client';
+
+    // Firebase設定
+    const firebaseConfig = {
+      apiKey: "AIzaSyCCPWKn60sOVXBxTjUaoaiV_ob6u98K11U",
+      authDomain: "game-mahjong-app.firebaseapp.com",
+      projectId: "game-mahjong-app",
+      storageBucket: "game-mahjong-app.firebasestorage.app",
+      messagingSenderId: "374194287250",
+      appId: "1:374194287250:web:feb1ca77f53ee1a6786c4b"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
 
     function App() {
       const [events, setEvents] = useState([]);
@@ -33,31 +48,38 @@
       const [tempWebhookUrl, setTempWebhookUrl] = useState('');
 
       useEffect(() => {
-        loadEvents();
         loadWebhookUrl();
         
-        // 1分ごとに期限切れをチェック
-        const interval = setInterval(checkExpiredEvents, 60000);
-        return () => clearInterval(interval);
+        // Firestoreからリアルタイムでデータを取得
+        const q = query(collection(db, 'events'), orderBy('createdAt', 'desc'));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+          const eventsList = [];
+          snapshot.forEach((doc) => {
+            eventsList.push({ id: doc.id, ...doc.data() });
+          });
+          setEvents(eventsList);
+        });
+
+        return () => unsubscribe();
       }, []);
 
-      const checkExpiredEvents = () => {
-        const now = new Date();
-        const stored = localStorage.getItem('events');
-        if (!stored) return;
-        
-        const currentEvents = JSON.parse(stored);
-        const activeEvents = currentEvents.filter(event => {
-          if (!event.deadline) return true;
-          const deadline = new Date(event.deadline);
-          return deadline > now;
-        });
-        
-        if (activeEvents.length !== currentEvents.length) {
-          localStorage.setItem('events', JSON.stringify(activeEvents));
-          setEvents(activeEvents);
-        }
-      };
+      useEffect(() => {
+        // 期限切れイベントの自動削除
+        const checkExpired = setInterval(async () => {
+          const now = new Date();
+          events.forEach(async (event) => {
+            if (event.deadline && new Date(event.deadline) < now) {
+              try {
+                await deleteDoc(doc(db, 'events', event.id));
+              } catch (error) {
+                console.error('削除エラー:', error);
+              }
+            }
+          });
+        }, 60000);
+
+        return () => clearInterval(checkExpired);
+      }, [events]);
 
       const loadWebhookUrl = () => {
         const saved = localStorage.getItem('discordWebhook');
@@ -72,18 +94,6 @@
         setWebhookUrl(tempWebhookUrl);
         setShowSettings(false);
         alert('Discord Webhookを保存しました！✅');
-      };
-
-      const loadEvents = () => {
-        const stored = localStorage.getItem('events');
-        if (stored) {
-          setEvents(JSON.parse(stored));
-        }
-      };
-
-      const saveEvents = (newEvents) => {
-        localStorage.setItem('events', JSON.stringify(newEvents));
-        setEvents(newEvents);
       };
 
       const sendDiscordNotification = async (event) => {
@@ -118,7 +128,7 @@
         };
 
         try {
-          const response = await fetch(webhookUrl, {
+          await fetch(webhookUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -126,10 +136,6 @@
               embeds: [embed]
             })
           });
-
-          if (!response.ok) {
-            console.error('Discord通知エラー');
-          }
         } catch (error) {
           console.error('Discord通知送信失敗:', error);
         }
@@ -138,9 +144,7 @@
       const createEvent = async () => {
         if (!newEventTitle.trim()) return;
 
-        const eventId = `event_${Date.now()}`;
         const newEvent = {
-          id: eventId,
           title: newEventTitle,
           time: newEventTime || '今日',
           deadline: newEventDeadline || null,
@@ -150,59 +154,68 @@
           createdAt: Date.now()
         };
 
-        const updatedEvents = [newEvent, ...events];
-        saveEvents(updatedEvents);
-        
-        setNewEventTitle('');
-        setNewEventTime('');
-        setNewEventDeadline('');
-        setNewEventMinPlayers(3);
-        setNewEventNote('');
-        setShowCreateForm(false);
+        try {
+          const docRef = await addDoc(collection(db, 'events'), newEvent);
+          
+          setNewEventTitle('');
+          setNewEventTime('');
+          setNewEventDeadline('');
+          setNewEventMinPlayers(3);
+          setNewEventNote('');
+          setShowCreateForm(false);
 
-        await sendDiscordNotification(newEvent);
-        alert('募集を作成してDiscordに通知しました！🎉');
+          await sendDiscordNotification({ id: docRef.id, ...newEvent });
+          alert('募集を作成してDiscordに通知しました！🎉');
+        } catch (error) {
+          console.error('作成エラー:', error);
+          alert('募集の作成に失敗しました');
+        }
       };
 
-      const deleteEvent = (eventId) => {
+      const deleteEvent = async (eventId) => {
         if (!confirm('この募集を削除しますか？')) return;
         
-        const updatedEvents = events.filter(e => e.id !== eventId);
-        saveEvents(updatedEvents);
+        try {
+          await deleteDoc(doc(db, 'events', eventId));
+        } catch (error) {
+          console.error('削除エラー:', error);
+          alert('削除に失敗しました');
+        }
       };
 
       const joinEvent = async (eventId) => {
         const userId = getUserId();
-        const eventIndex = events.findIndex(e => e.id === eventId);
-        if (eventIndex === -1) return;
+        const event = events.find(e => e.id === eventId);
+        if (!event) return;
 
-        const event = {...events[eventIndex]};
         const wasEnough = event.participants.length >= event.minPlayers;
+        let newParticipants;
 
         if (event.participants.includes(userId)) {
-          event.participants = event.participants.filter(id => id !== userId);
+          newParticipants = event.participants.filter(id => id !== userId);
         } else {
-          event.participants.push(userId);
+          newParticipants = [...event.participants, userId];
         }
 
-        const isNowEnough = event.participants.length >= event.minPlayers;
-        
-        const updatedEvents = [...events];
-        updatedEvents[eventIndex] = event;
-        saveEvents(updatedEvents);
+        const isNowEnough = newParticipants.length >= event.minPlayers;
 
-        if (!wasEnough && isNowEnough && webhookUrl) {
-          try {
+        try {
+          await updateDoc(doc(db, 'events', eventId), {
+            participants: newParticipants
+          });
+
+          if (!wasEnough && isNowEnough && webhookUrl) {
             await fetch(webhookUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                content: `🎉 **${event.title}** の開催が決定しました！\n👥 ${event.participants.length}人集まりました！`
+                content: `🎉 **${event.title}** の開催が決定しました！\n👥 ${newParticipants.length}人集まりました！`
               })
             });
-          } catch (error) {
-            console.error('Discord通知エラー:', error);
           }
+        } catch (error) {
+          console.error('参加エラー:', error);
+          alert('参加登録に失敗しました');
         }
       };
 
