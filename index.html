@@ -77,7 +77,11 @@
         const unsubEvents = onSnapshot(qEvents, (snapshot) => {
           const eventsList = [];
           snapshot.forEach((doc) => {
-            eventsList.push({ id: doc.id, ...doc.data() });
+            const data = doc.data();
+            // 削除されていないものだけ表示
+            if (!data.deleted) {
+              eventsList.push({ id: doc.id, ...data });
+            }
           });
           setEvents(eventsList);
         });
@@ -87,7 +91,11 @@
         const unsubThreads = onSnapshot(qThreads, (snapshot) => {
           const threadsList = [];
           snapshot.forEach((doc) => {
-            threadsList.push({ id: doc.id, ...doc.data() });
+            const data = doc.data();
+            // 削除されていないものだけ表示
+            if (!data.deleted) {
+              threadsList.push({ id: doc.id, ...data });
+            }
           });
           setThreads(threadsList);
         });
@@ -256,7 +264,10 @@
       const deleteEvent = async (eventId) => {
         if (!confirm('この募集を削除しますか？')) return;
         try {
-          await deleteDoc(doc(db, 'events', eventId));
+          await updateDoc(doc(db, 'events', eventId), {
+            deleted: true,
+            deletedAt: Date.now()
+          });
         } catch (error) {
           console.error('削除エラー:', error);
         }
@@ -265,7 +276,10 @@
       const deleteThread = async (threadId) => {
         if (!confirm('このスレッドを削除しますか？')) return;
         try {
-          await deleteDoc(doc(db, 'threads', threadId));
+          await updateDoc(doc(db, 'threads', threadId), {
+            deleted: true,
+            deletedAt: Date.now()
+          });
           setCurrentThread(null);
         } catch (error) {
           console.error('削除エラー:', error);
