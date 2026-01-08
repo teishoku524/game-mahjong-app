@@ -231,7 +231,10 @@
       const addReply = async () => {
         if (!replyText.trim() || !currentThread) return;
 
-        const posts = currentThread.posts || [];
+        const thread = threads.find(t => t.id === currentThread.id);
+        if (!thread) return;
+
+        const posts = thread.posts || [];
         const newPost = {
           id: posts.length + 1,
           text: replyText,
@@ -507,7 +510,10 @@
       // 掲示板タブ
       const renderBoardTab = () => {
         if (currentThread) {
-          const posts = currentThread.posts || [];
+          // リアルタイムでスレッドを更新
+          const thread = threads.find(t => t.id === currentThread.id);
+          const posts = thread ? (thread.posts || []) : (currentThread.posts || []);
+          
           return React.createElement('div', null,
             React.createElement('button', {
               onClick: () => setCurrentThread(null),
